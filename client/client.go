@@ -19,6 +19,7 @@ import (
 	"github.com/boltdb/bolt"
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/lib"
+	discover "github.com/hashicorp/go-discover"
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/nomad/client/allocdir"
 	"github.com/hashicorp/nomad/client/config"
@@ -619,6 +620,18 @@ func (c *Client) SetServers(in []string) error {
 	return c.setServersImpl(in, false)
 }
 
+func (c *Client) getServerAddr(srv string) (string, error) {
+	if strings.HasPrefix(srv, "provider=") {
+		disc := &discover.Discover{}
+		discoveredServer, err := disc.Addrs(srv, c.logger)
+		if err != nil || len(discoveredServer) != 1 {
+			return "", err
+		}
+		return discoveredServer[0], nil
+	}
+	return srv, nil
+}
+
 // setServersImpl sets a new list of nomad servers to connect to. If force is
 // set, we add the server to the internal serverlist even if the server could not
 // be pinged. An error is returned if no endpoints were valid when non-forcing.
@@ -636,7 +649,14 @@ func (c *Client) setServersImpl(in []string, force bool) error {
 	for _, s := range in {
 		go func(srv string) {
 			defer wg.Done()
-			addr, err := resolveServer(srv)
+
+			server, err := c.getServerAddr(srv)
+			if err != nil {
+				c.logger.Printf("[DEBUG] client: ignoring server %s due to resolution error: %v", srv, err)
+				merr.Errors = append(merr.Errors, err)
+				return
+			}
+			addr, err := resolveServer(server)
 			if err != nil {
 				c.logger.Printf("[DEBUG] client: ignoring server %s due to resolution error: %v", srv, err)
 				merr.Errors = append(merr.Errors, err)
