@@ -80,9 +80,6 @@ func (c *Command) readConfig() *Config {
 	flags.IntVar(&cmdConfig.Server.BootstrapExpect, "bootstrap-expect", 0, "")
 	flags.BoolVar(&cmdConfig.Server.RejoinAfterLeave, "rejoin", false, "")
 	flags.Var((*flaghelper.StringFlag)(&cmdConfig.Server.StartJoin), "join", "")
-	flags.Var((*flaghelper.StringFlag)(&cmdConfig.Server.RetryJoin), "retry-join", "")
-	flags.IntVar(&cmdConfig.Server.RetryMaxAttempts, "retry-max", 0, "")
-	flags.StringVar(&cmdConfig.Server.RetryInterval, "retry-interval", "", "")
 	flags.StringVar(&cmdConfig.Server.EncryptKey, "encrypt", "", "gossip encryption key")
 	flags.IntVar(&cmdConfig.Server.RaftProtocol, "raft-protocol", 0, "")
 
@@ -103,6 +100,9 @@ func (c *Command) readConfig() *Config {
 	flags.StringVar(&cmdConfig.Datacenter, "dc", "", "")
 	flags.StringVar(&cmdConfig.LogLevel, "log-level", "", "")
 	flags.StringVar(&cmdConfig.NodeName, "node", "", "")
+	flags.Var((*flaghelper.StringFlag)(&cmdConfig.RetryJoin), "retry-join", "")
+	flags.IntVar(&cmdConfig.RetryMaxAttempts, "retry-max", 0, "")
+	flags.StringVar(&cmdConfig.RetryInterval, "retry-interval", "", "")
 
 	// Consul options
 	flags.StringVar(&cmdConfig.Consul.Auth, "consul-auth", "", "")
@@ -268,12 +268,12 @@ func (c *Command) readConfig() *Config {
 	}
 
 	// Parse the RetryInterval.
-	dur, err := time.ParseDuration(config.Server.RetryInterval)
+	dur, err := time.ParseDuration(config.RetryInterval)
 	if err != nil {
 		c.Ui.Error(fmt.Sprintf("Error parsing retry interval: %s", err))
 		return nil
 	}
-	config.Server.retryInterval = dur
+	config.retryInterval = dur
 
 	// Check that the server is running in at least one mode.
 	if !(config.Server.Enabled || config.Client.Enabled) {
@@ -548,10 +548,11 @@ func (c *Command) Run(args []string) int {
 	c.retryJoinErrCh = make(chan struct{})
 
 	joiner := retryJoiner{
-		join:     c.agent.server.Join,
-		discover: &discover.Discover{},
-		errCh:    c.retryJoinErrCh,
-		logger:   c.agent.logger,
+		serverJoin: c.agent.server.Join,
+		clientJoin: c.agent.client.SetServers,
+		discover:   &discover.Discover{},
+		errCh:      c.retryJoinErrCh,
+		logger:     c.agent.logger,
 	}
 	go joiner.RetryJoin(config)
 

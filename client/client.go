@@ -19,7 +19,6 @@ import (
 	"github.com/boltdb/bolt"
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/lib"
-	discover "github.com/hashicorp/go-discover"
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/nomad/client/allocdir"
 	"github.com/hashicorp/nomad/client/config"
@@ -281,7 +280,7 @@ func NewClient(cfg *config.Config, consulCatalog consul.CatalogAPI, consulServic
 	// Set the preconfigured list of static servers
 	c.configLock.RLock()
 	if len(c.configCopy.Servers) > 0 {
-		if err := c.setServersImpl(c.configCopy.Servers, true); err != nil {
+		if _, err := c.setServersImpl(c.configCopy.Servers, true); err != nil {
 			logger.Printf("[WARN] client: None of the configured servers are valid: %v", err)
 		}
 	}
@@ -616,20 +615,8 @@ func (c *Client) GetServers() []string {
 
 // SetServers sets a new list of nomad servers to connect to. As long as one
 // server is resolvable no error is returned.
-func (c *Client) SetServers(in []string) error {
+func (c *Client) SetServers(in []string) (int, error) {
 	return c.setServersImpl(in, false)
-}
-
-func (c *Client) getServerAddr(srv string) (string, error) {
-	if strings.HasPrefix(srv, "provider=") {
-		disc := &discover.Discover{}
-		discoveredServer, err := disc.Addrs(srv, c.logger)
-		if err != nil || len(discoveredServer) != 1 {
-			return "", err
-		}
-		return discoveredServer[0], nil
-	}
-	return srv, nil
 }
 
 // setServersImpl sets a new list of nomad servers to connect to. If force is
@@ -638,7 +625,7 @@ func (c *Client) getServerAddr(srv string) (string, error) {
 //
 // Force should be used when setting the servers from the initial configuration
 // since the server may be starting up in parallel and initial pings may fail.
-func (c *Client) setServersImpl(in []string, force bool) error {
+func (c *Client) setServersImpl(in []string, force bool) (int, error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var merr multierror.Error
@@ -647,18 +634,12 @@ func (c *Client) setServersImpl(in []string, force bool) error {
 	wg.Add(len(in))
 
 	for _, s := range in {
-		go func(srv string) {
+		go func(server string) {
 			defer wg.Done()
 
-			server, err := c.getServerAddr(srv)
-			if err != nil {
-				c.logger.Printf("[DEBUG] client: ignoring server %s due to resolution error: %v", srv, err)
-				merr.Errors = append(merr.Errors, err)
-				return
-			}
 			addr, err := resolveServer(server)
 			if err != nil {
-				c.logger.Printf("[DEBUG] client: ignoring server %s due to resolution error: %v", srv, err)
+				c.logger.Printf("[DEBUG] client: ignoring server %s due to resolution error: %v", server, err)
 				merr.Errors = append(merr.Errors, err)
 				return
 			}
@@ -685,13 +666,13 @@ func (c *Client) setServersImpl(in []string, force bool) error {
 	// Only return errors if no servers are valid
 	if len(endpoints) == 0 {
 		if len(merr.Errors) > 0 {
-			return merr.ErrorOrNil()
+			return 0, merr.ErrorOrNil()
 		}
-		return noServersErr
+		return 0, noServersErr
 	}
 
 	c.servers.SetServers(endpoints)
-	return nil
+	return len(endpoints), nil
 }
 
 // restoreState is used to restore our state from the data dir

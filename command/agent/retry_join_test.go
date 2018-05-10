@@ -30,7 +30,9 @@ func (m *MockDiscover) Names() []string {
 
 func TestRetryJoin_Integration(t *testing.T) {
 	t.Parallel()
-	agent := NewTestAgent(t, t.Name(), nil)
+	agent := NewTestAgent(t, t.Name(), func(c *Config) {
+		c.Server.Enabled = true
+	})
 	defer agent.Shutdown()
 
 	doneCh := make(chan struct{})
@@ -62,7 +64,7 @@ func TestRetryJoin_Integration(t *testing.T) {
 
 	go func() {
 		if code := cmd.Run(args); code != 0 {
-			t.Logf("bad: %d", code)
+			t.Logf("encountered error code: %d", code)
 		}
 		close(doneCh)
 	}()
@@ -70,7 +72,7 @@ func TestRetryJoin_Integration(t *testing.T) {
 	testutil.WaitForResult(func() (bool, error) {
 		mem := agent.server.Members()
 		if len(mem) != 2 {
-			return false, fmt.Errorf("bad :%#v", mem)
+			return false, fmt.Errorf("wrong number of members :%#v", mem)
 		}
 		return true, nil
 	}, func(err error) {
@@ -83,10 +85,10 @@ func TestRetryJoin_NonCloud(t *testing.T) {
 	require := require.New(t)
 
 	newConfig := &Config{
+		RetryMaxAttempts: 1,
+		RetryJoin:        []string{"127.0.0.1"},
 		Server: &ServerConfig{
-			RetryMaxAttempts: 1,
-			RetryJoin:        []string{"127.0.0.1"},
-			Enabled:          true,
+			Enabled: true,
 		},
 	}
 
@@ -98,10 +100,10 @@ func TestRetryJoin_NonCloud(t *testing.T) {
 	}
 
 	joiner := retryJoiner{
-		discover: &MockDiscover{},
-		join:     mockJoin,
-		logger:   log.New(ioutil.Discard, "", 0),
-		errCh:    make(chan struct{}),
+		discover:   &MockDiscover{},
+		serverJoin: mockJoin,
+		logger:     log.New(ioutil.Discard, "", 0),
+		errCh:      make(chan struct{}),
 	}
 
 	joiner.RetryJoin(newConfig)
@@ -115,10 +117,10 @@ func TestRetryJoin_Cloud(t *testing.T) {
 	require := require.New(t)
 
 	newConfig := &Config{
+		RetryMaxAttempts: 1,
+		RetryJoin:        []string{"provider=aws, tag_value=foo"},
 		Server: &ServerConfig{
-			RetryMaxAttempts: 1,
-			RetryJoin:        []string{"provider=aws, tag_value=foo"},
-			Enabled:          true,
+			Enabled: true,
 		},
 	}
 
@@ -131,10 +133,10 @@ func TestRetryJoin_Cloud(t *testing.T) {
 
 	mockDiscover := &MockDiscover{}
 	joiner := retryJoiner{
-		discover: mockDiscover,
-		join:     mockJoin,
-		logger:   log.New(ioutil.Discard, "", 0),
-		errCh:    make(chan struct{}),
+		discover:   mockDiscover,
+		serverJoin: mockJoin,
+		logger:     log.New(ioutil.Discard, "", 0),
+		errCh:      make(chan struct{}),
 	}
 
 	joiner.RetryJoin(newConfig)
@@ -149,10 +151,10 @@ func TestRetryJoin_MixedProvider(t *testing.T) {
 	require := require.New(t)
 
 	newConfig := &Config{
+		RetryMaxAttempts: 1,
+		RetryJoin:        []string{"provider=aws, tag_value=foo", "127.0.0.1"},
 		Server: &ServerConfig{
-			RetryMaxAttempts: 1,
-			RetryJoin:        []string{"provider=aws, tag_value=foo", "127.0.0.1"},
-			Enabled:          true,
+			Enabled: true,
 		},
 	}
 
@@ -165,10 +167,10 @@ func TestRetryJoin_MixedProvider(t *testing.T) {
 
 	mockDiscover := &MockDiscover{}
 	joiner := retryJoiner{
-		discover: mockDiscover,
-		join:     mockJoin,
-		logger:   log.New(ioutil.Discard, "", 0),
-		errCh:    make(chan struct{}),
+		discover:   mockDiscover,
+		serverJoin: mockJoin,
+		logger:     log.New(ioutil.Discard, "", 0),
+		errCh:      make(chan struct{}),
 	}
 
 	joiner.RetryJoin(newConfig)

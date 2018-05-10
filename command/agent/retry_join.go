@@ -27,8 +27,11 @@ type DiscoverInterface interface {
 // retryJoiner is used to handle retrying a join until it succeeds or all of
 // its tries are exhausted.
 type retryJoiner struct {
-	// join adds the specified servers to the serf cluster
-	join func([]string) (int, error)
+	// serverJoin adds the specified servers to the serf cluster
+	serverJoin func([]string) (int, error)
+
+	// clientJoin adds the specified servers to the client server list
+	clientJoin func([]string) (int, error)
 
 	// discover is of type Discover, where this is either the go-discover
 	// implementation or a mock used for testing
@@ -45,20 +48,20 @@ type retryJoiner struct {
 // retryJoin is used to handle retrying a join until it succeeds or all retries
 // are exhausted.
 func (r *retryJoiner) RetryJoin(config *Config) {
-	if len(config.Server.RetryJoin) == 0 || !config.Server.Enabled {
+	if len(config.RetryJoin) == 0 {
 		return
 	}
 
 	attempt := 0
 
-	addrsToJoin := strings.Join(config.Server.RetryJoin, " ")
+	addrsToJoin := strings.Join(config.RetryJoin, " ")
 	r.logger.Printf("[INFO] agent: Joining cluster... %s", addrsToJoin)
 
 	for {
 		var addrs []string
 		var err error
 
-		for _, addr := range config.Server.RetryJoin {
+		for _, addr := range config.RetryJoin {
 			switch {
 			case strings.HasPrefix(addr, "provider="):
 				servers, err := r.discover.Addrs(addr, r.logger)
@@ -73,14 +76,22 @@ func (r *retryJoiner) RetryJoin(config *Config) {
 		}
 
 		if len(addrs) > 0 {
-			n, err := r.join(addrs)
-			if err == nil {
-				r.logger.Printf("[INFO] agent: Join completed. Synced with %d initial agents", n)
+			if config.Server != nil && config.Server.Enabled {
+				n, err := r.serverJoin(addrs)
+				if err == nil {
+					r.logger.Printf("[INFO] agent: Server Join completed. Synced with %d initial agents", n)
+				}
+			}
+			if config.Client != nil && config.Client.Enabled {
+				n, err := r.clientJoin(addrs)
+				if err == nil {
+					r.logger.Printf("[INFO] agent: Client Join completed. Synced with %d initial agents", n)
+				}
 			}
 		}
 
 		attempt++
-		if config.Server.RetryMaxAttempts > 0 && attempt > config.Server.RetryMaxAttempts {
+		if config.RetryMaxAttempts > 0 && attempt > config.RetryMaxAttempts {
 			r.logger.Printf("[ERR] agent: max join retry exhausted, exiting")
 			close(r.errCh)
 			return
@@ -88,8 +99,8 @@ func (r *retryJoiner) RetryJoin(config *Config) {
 
 		if err != nil {
 			r.logger.Printf("[WARN] agent: Join failed: %v, retrying in %v", err,
-				config.Server.RetryInterval)
+				config.RetryInterval)
 		}
-		time.Sleep(config.Server.retryInterval)
+		time.Sleep(config.retryInterval)
 	}
 }

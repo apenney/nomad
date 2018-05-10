@@ -133,6 +133,20 @@ type Config struct {
 
 	// Autopilot contains the configuration for Autopilot behavior.
 	Autopilot *config.AutopilotConfig `mapstructure:"autopilot"`
+
+	// RetryMaxAttempts specifies the maximum number of times to retry joining a
+	// host on startup. This is useful for cases where we know the node will be
+	// online eventually.
+	RetryMaxAttempts int `mapstructure:"retry_max"`
+
+	// RetryInterval specifies the amount of time to wait in between join
+	// attempts on agent start. The minimum allowed value is 1 second and
+	// the default is 30s.
+	RetryInterval string        `mapstructure:"retry_interval"`
+	retryInterval time.Duration `mapstructure:"-"`
+
+	// RetryJoin is a list of addresses to join with retry enabled.
+	RetryJoin []string `mapstructure:"retry_join"`
 }
 
 // ClientConfig is configuration specific to the client mode
@@ -312,20 +326,6 @@ type ServerConfig struct {
 	// agent starts. If Serf is unable to communicate with any of these
 	// addresses, then the agent will error and exit.
 	StartJoin []string `mapstructure:"start_join"`
-
-	// RetryJoin is a list of addresses to join with retry enabled.
-	RetryJoin []string `mapstructure:"retry_join"`
-
-	// RetryMaxAttempts specifies the maximum number of times to retry joining a
-	// host on startup. This is useful for cases where we know the node will be
-	// online eventually.
-	RetryMaxAttempts int `mapstructure:"retry_max"`
-
-	// RetryInterval specifies the amount of time to wait in between join
-	// attempts on agent start. The minimum allowed value is 1 second and
-	// the default is 30s.
-	RetryInterval string        `mapstructure:"retry_interval"`
-	retryInterval time.Duration `mapstructure:"-"`
 
 	// RejoinAfterLeave controls our interaction with the cluster after leave.
 	// When set to false (default), a leave causes Consul to not rejoin
@@ -603,11 +603,8 @@ func DefaultConfig() *Config {
 			NoHostUUID:            helper.BoolToPtr(true),
 		},
 		Server: &ServerConfig{
-			Enabled:          false,
-			StartJoin:        []string{},
-			RetryJoin:        []string{},
-			RetryInterval:    "30s",
-			RetryMaxAttempts: 0,
+			Enabled:   false,
+			StartJoin: []string{},
 		},
 		ACL: &ACLConfig{
 			Enabled:   false,
@@ -624,6 +621,9 @@ func DefaultConfig() *Config {
 		Version:            version.GetVersion(),
 		Autopilot:          config.DefaultAutopilotConfig(),
 		DisableUpdateCheck: helper.BoolToPtr(false),
+		RetryJoin:          []string{},
+		RetryInterval:      "30s",
+		RetryMaxAttempts:   0,
 	}
 }
 
@@ -1033,13 +1033,6 @@ func (a *ServerConfig) Merge(b *ServerConfig) *ServerConfig {
 	if b.MaxHeartbeatsPerSecond != 0.0 {
 		result.MaxHeartbeatsPerSecond = b.MaxHeartbeatsPerSecond
 	}
-	if b.RetryMaxAttempts != 0 {
-		result.RetryMaxAttempts = b.RetryMaxAttempts
-	}
-	if b.RetryInterval != "" {
-		result.RetryInterval = b.RetryInterval
-		result.retryInterval = b.retryInterval
-	}
 	if b.RejoinAfterLeave {
 		result.RejoinAfterLeave = true
 	}
@@ -1063,11 +1056,6 @@ func (a *ServerConfig) Merge(b *ServerConfig) *ServerConfig {
 	result.StartJoin = make([]string, 0, len(a.StartJoin)+len(b.StartJoin))
 	result.StartJoin = append(result.StartJoin, a.StartJoin...)
 	result.StartJoin = append(result.StartJoin, b.StartJoin...)
-
-	// Copy the retry join addresses
-	result.RetryJoin = make([]string, 0, len(a.RetryJoin)+len(b.RetryJoin))
-	result.RetryJoin = append(result.RetryJoin, a.RetryJoin...)
-	result.RetryJoin = append(result.RetryJoin, b.RetryJoin...)
 
 	return &result
 }
